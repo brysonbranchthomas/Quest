@@ -400,6 +400,7 @@
         <div class="pill-group" id="f-type-group">
           <button type="button" class="pill-opt active" data-val="daily">Every Day</button>
           <button type="button" class="pill-opt" data-val="weekly">Specific Days</button>
+          <button type="button" class="pill-opt" data-val="interval">Every N Days</button>
           <button type="button" class="pill-opt" data-val="adhoc">Ad Hoc</button>
         </div>
       </div>
@@ -414,6 +415,15 @@
           <button type="button" class="pill-opt day-pill" data-day="4">Thu</button>
           <button type="button" class="pill-opt day-pill" data-day="5">Fri</button>
           <button type="button" class="pill-opt day-pill" data-day="6">Sat</button>
+        </div>
+      </div>
+
+      <div class="form-row form-sub-row" id="f-interval-row">
+        <div class="form-label">Repeat Every</div>
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <input class="form-input" id="f-interval-n" type="number" min="1" value="3" style="max-width:80px;"> days
+          <span style="font-size:11px;color:var(--text-muted);margin-left:10px;">starting</span>
+          <input class="form-input" id="f-interval-start" type="date" style="max-width:180px;">
         </div>
       </div>
 
@@ -444,6 +454,12 @@
       <div class="mgmt-group-title">Weekly (Specific Days)</div>
       <div id="mgmt-weekly-list"></div>
       <div class="empty-note" id="mgmt-weekly-empty" style="display:none;">No weekly tasks yet.</div>
+    </div>
+
+    <div class="mgmt-group">
+      <div class="mgmt-group-title">Every N Days</div>
+      <div id="mgmt-interval-list"></div>
+      <div class="empty-note" id="mgmt-interval-empty" style="display:none;">No recurring-interval tasks yet.</div>
     </div>
 
     <div class="mgmt-group">
@@ -588,9 +604,24 @@ function levelInfo(totalPoints) {
 /* ══════════════════════════════════════════════
    TASK / LOG HELPERS
 ══════════════════════════════════════════════ */
+function isIntervalDueOn(task, dateStr) {
+  if (!task.startDate || dateStr < task.startDate) return false;
+  const start = new Date(task.startDate + 'T00:00:00');
+  const target = new Date(dateStr + 'T00:00:00');
+  const diffDays = Math.round((target - start) / 86400000);
+  const n = task.intervalDays || 1;
+  return diffDays >= 0 && diffDays % n === 0;
+}
+
 function recurringTasksForDate(date) {
   const dow = date.getDay();
-  return DATA.tasks.filter(t => t.type === 'daily' || (t.type === 'weekly' && t.days.includes(dow)));
+  const dStr = todayStr(date);
+  return DATA.tasks.filter(t => {
+    if (t.type === 'daily') return true;
+    if (t.type === 'weekly') return t.days.includes(dow);
+    if (t.type === 'interval') return isIntervalDueOn(t, dStr);
+    return false;
+  });
 }
 
 function ensureLogEntry(dateStr, date) {
@@ -837,19 +868,23 @@ function swapOrder(a, b) {
 function renderManage() {
   const dailyList = document.getElementById('mgmt-daily-list');
   const weeklyList = document.getElementById('mgmt-weekly-list');
+  const intervalList = document.getElementById('mgmt-interval-list');
   const adhocList = document.getElementById('mgmt-adhoc-list');
-  dailyList.innerHTML = ''; weeklyList.innerHTML = ''; adhocList.innerHTML = '';
+  dailyList.innerHTML = ''; weeklyList.innerHTML = ''; intervalList.innerHTML = ''; adhocList.innerHTML = '';
 
   const daily = sortByOrder(DATA.tasks.filter(t => t.type === 'daily'));
   const weekly = sortByOrder(DATA.tasks.filter(t => t.type === 'weekly'));
+  const interval = sortByOrder(DATA.tasks.filter(t => t.type === 'interval'));
   const adhoc = sortByOrder(DATA.tasks.filter(t => t.type === 'adhoc'));
 
   document.getElementById('mgmt-daily-empty').style.display = daily.length ? 'none' : 'flex';
   document.getElementById('mgmt-weekly-empty').style.display = weekly.length ? 'none' : 'flex';
+  document.getElementById('mgmt-interval-empty').style.display = interval.length ? 'none' : 'flex';
   document.getElementById('mgmt-adhoc-empty').style.display = adhoc.length ? 'none' : 'flex';
 
   daily.forEach((t, i) => dailyList.appendChild(mgmtRow(t, daily, i)));
   weekly.forEach((t, i) => weeklyList.appendChild(mgmtRow(t, weekly, i)));
+  interval.forEach((t, i) => intervalList.appendChild(mgmtRow(t, interval, i)));
   adhoc.forEach((t, i) => adhocList.appendChild(mgmtRow(t, adhoc, i)));
 }
 
@@ -859,6 +894,8 @@ function mgmtRow(t, subset, idx) {
   let extra = '';
   if (t.type === 'weekly') {
     extra = `<div class="mgmt-days">${t.days.slice().sort().map(d => `<span class="day-chip">${DOW[d]}</span>`).join('')}</div>`;
+  } else if (t.type === 'interval') {
+    extra = `<span class="due-tag">Every ${t.intervalDays} day${t.intervalDays === 1 ? '' : 's'} · from ${t.startDate}</span>`;
   } else if (t.type === 'adhoc') {
     extra = t.dueDate ? `<span class="due-tag">Due ${t.dueDate}</span>` : `<span class="due-tag">No due date</span>`;
   }
@@ -886,12 +923,14 @@ let formDiff = 'easy';
 let formDays = new Set();
 
 function setupForm() {
+  document.getElementById('f-interval-start').value = todayStr();
   document.querySelectorAll('#f-type-group .pill-opt').forEach(btn => {
     btn.onclick = () => {
       document.querySelectorAll('#f-type-group .pill-opt').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       formType = btn.dataset.val;
       document.getElementById('f-days-row').classList.toggle('show', formType === 'weekly');
+      document.getElementById('f-interval-row').classList.toggle('show', formType === 'interval');
       document.getElementById('f-due-row').classList.toggle('show', formType === 'adhoc');
     };
   });
@@ -918,20 +957,29 @@ function setupForm() {
       showToast('Pick at least one day for a weekly task.');
       return;
     }
+    let intervalDays = null, startDate = null;
+    if (formType === 'interval') {
+      intervalDays = parseInt(document.getElementById('f-interval-n').value, 10);
+      if (!intervalDays || intervalDays < 1) intervalDays = 1;
+      startDate = document.getElementById('f-interval-start').value || todayStr();
+    }
     const maxOrder = DATA.tasks.filter(x => x.type === formType).reduce((m, x) => Math.max(m, x.order ?? 0), -1);
     const task = {
       id: uid(), name, type: formType, difficulty: formDiff,
       days: formType === 'weekly' ? Array.from(formDays) : [],
       dueDate: formType === 'adhoc' ? (document.getElementById('f-due').value || null) : null,
+      intervalDays, startDate,
       order: maxOrder + 1,
       createdAt: todayStr(),
     };
     DATA.tasks.push(task);
     saveData();
     document.getElementById('add-task-form').reset();
+    document.getElementById('f-interval-start').value = todayStr();
     formDays.clear();
     document.querySelectorAll('#f-days-group .day-pill').forEach(b => b.classList.remove('active'));
     document.getElementById('f-days-row').classList.remove('show');
+    document.getElementById('f-interval-row').classList.remove('show');
     document.getElementById('f-due-row').classList.remove('show');
     document.querySelectorAll('#f-type-group .pill-opt').forEach(b => b.classList.remove('active'));
     document.querySelector('#f-type-group .pill-opt[data-val="daily"]').classList.add('active');
