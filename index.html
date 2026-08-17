@@ -435,9 +435,9 @@
       <div class="form-row">
         <div class="form-label">Difficulty</div>
         <div class="pill-group" id="f-diff-group">
-          <button type="button" class="pill-opt diff-opt active easy" data-val="easy">Easy · 10 XP</button>
-          <button type="button" class="pill-opt diff-opt medium" data-val="medium">Medium · 20 XP</button>
-          <button type="button" class="pill-opt diff-opt hard" data-val="hard">Hard · 35 XP</button>
+          <button type="button" class="pill-opt diff-opt active easy" data-val="easy">Easy · 5 XP</button>
+          <button type="button" class="pill-opt diff-opt medium" data-val="medium">Medium · 10 XP</button>
+          <button type="button" class="pill-opt diff-opt hard" data-val="hard">Hard · 20 XP</button>
         </div>
       </div>
 
@@ -510,7 +510,7 @@ let currentUserId = null;
 /* ══════════════════════════════════════════════
    DATA + STORAGE
 ══════════════════════════════════════════════ */
-const POINTS = { easy: 10, medium: 20, hard: 35 };
+const POINTS = { easy: 5, medium: 10, hard: 20 };
 const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
 let DATA = { tasks: [], totalPoints: 0, log: {} };
@@ -632,13 +632,24 @@ function ensureLogEntry(dateStr, date) {
       adhocEntries: []
     };
   } else {
-    // sync: add newly-created recurring tasks not yet represented, drop ones that were deleted
+    // sync: add newly-created recurring tasks not yet represented, drop ones that were deleted,
+    // and refresh still-pending entries so difficulty/point edits apply before they're completed
     const recurring = recurringTasksForDate(date);
     const entry = DATA.log[dateStr];
+    const taskById = {};
+    recurring.forEach(t => { taskById[t.id] = t; });
     const existingIds = new Set(entry.entries.map(e => e.taskId));
     recurring.forEach(t => {
       if (!existingIds.has(t.id)) {
         entry.entries.push({ taskId: t.id, name: t.name, difficulty: t.difficulty, points: POINTS[t.difficulty], status: 'pending', note: '' });
+      }
+    });
+    entry.entries.forEach(e => {
+      if (e.status === 'pending' && taskById[e.taskId]) {
+        const t = taskById[e.taskId];
+        e.name = t.name;
+        e.difficulty = t.difficulty;
+        e.points = POINTS[t.difficulty];
       }
     });
     const activeIds = new Set(recurring.map(t => t.id));
