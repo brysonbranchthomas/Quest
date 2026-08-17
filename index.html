@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Ascent — Daily Quest Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   @import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Serif+Display:ital@0;1&display=swap");
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -286,9 +287,45 @@
     .cal-cell { min-height: 46px; padding: 5px 6px; }
     .cal-legend { display: none; }
   }
+
+  /* ══ AUTH OVERLAY ══ */
+  .auth-overlay {
+    position: fixed; inset: 0; z-index: 300;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--ink); padding: 20px;
+  }
+  .auth-overlay.hidden { display: none; }
+  .auth-card {
+    width: 100%; max-width: 380px;
+    border: 1px solid var(--glass-border); background: var(--glass); backdrop-filter: blur(16px);
+    border-radius: 16px; padding: 32px 30px; text-align: center;
+  }
+  .auth-eyebrow { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.18em; color: var(--accent); margin-bottom: 10px; }
+  .auth-title { font-family: "DM Serif Display", serif; font-size: 22px; color: var(--text-primary); margin-bottom: 12px; }
+  .auth-desc { font-size: 12.5px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 22px; }
+  #auth-form { display: flex; flex-direction: column; gap: 12px; }
+  #auth-form .form-input { text-align: center; }
+  #auth-form .submit-btn { align-self: center; }
+  .auth-status { margin-top: 16px; font-size: 11.5px; color: var(--accent-bright); min-height: 16px; }
+  .auth-status.error { color: var(--red); }
 </style>
 </head>
 <body>
+
+<div id="auth-overlay" class="auth-overlay">
+  <div class="auth-card">
+    <div class="auth-eyebrow">Ascent</div>
+    <div class="auth-title">Sign in to sync your quests</div>
+    <p class="auth-desc">Enter your email and we'll send you a magic link — no password needed. Your data stays private to your account.</p>
+    <form id="auth-form">
+      <input type="email" id="auth-email" class="form-input" placeholder="you@example.com" required>
+      <button type="submit" class="submit-btn" id="auth-submit-btn">Send Magic Link</button>
+    </form>
+    <div class="auth-status" id="auth-status"></div>
+  </div>
+</div>
+
+<div id="app-root" style="display:none;">
 
 <header>
   <svg class="header-mark" width="30" height="30" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -443,12 +480,21 @@
 
 <div class="toast" id="toast"></div>
 
+</div>
+
 <script>
+/* ══════════════════════════════════════════════
+   SUPABASE SETUP
+══════════════════════════════════════════════ */
+const SUPABASE_URL = 'https://fpffwzlvdowomvzypokm.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_c1Gc4vR3wRSO6pH1RhMJDA_ZL2F86ut';
+const sbClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+let currentUserId = null;
+
 /* ══════════════════════════════════════════════
    DATA + STORAGE
 ══════════════════════════════════════════════ */
 const POINTS = { easy: 10, medium: 20, hard: 35 };
-const STORAGE_KEY = 'ascent-todo-data';
 const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
 let DATA = { tasks: [], totalPoints: 0, log: {} };
@@ -489,34 +535,45 @@ function uid() { return 't_' + Date.now().toString(36) + Math.random().toString(
 
 async function loadData() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      DATA = Object.assign({ tasks: [], totalPoints: 0, log: {} }, parsed);
+    const { data, error } = await sbClient
+      .from('quest_data')
+      .select('data')
+      .eq('user_id', currentUserId)
+      .maybeSingle();
+    if (error) throw error;
+    if (data && data.data) {
+      DATA = Object.assign({ tasks: [], totalPoints: 0, log: {} }, data.data);
       DATA.tasks.forEach((t, i) => { if (typeof t.order !== 'number') t.order = i; });
     } else {
-      // first time opening this file in this browser — seed the starter task list
+      // no row yet for this user — first time signing in, seed the starter task list
+      DATA = { tasks: [], totalPoints: 0, log: {} };
       seedDefaultTasks();
+      await saveDataNow();
     }
   } catch (e) {
-    // storage unavailable or corrupted — start fresh with defaults
     console.error('Load failed', e);
+    showToast('Could not load your data — check your connection and reload.');
     DATA = { tasks: [], totalPoints: 0, log: {} };
-    seedDefaultTasks();
+  }
+}
+
+async function saveDataNow() {
+  try {
+    const { error } = await sbClient
+      .from('quest_data')
+      .upsert({ user_id: currentUserId, data: DATA, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+    if (error) throw error;
+  } catch (e) {
+    console.error('Save failed', e);
+    showToast('Could not save — check your connection.');
   }
 }
 
 async function saveData() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(DATA));
-    } catch (e) {
-      console.error('Save failed', e);
-      showToast('Could not save — your browser may be blocking local storage.');
-    }
-  }, 200);
+  saveTimer = setTimeout(saveDataNow, 400);
 }
+
 
 /* ══════════════════════════════════════════════
    LEVELING
@@ -1048,12 +1105,60 @@ function renderAll() {
   }
 }
 
-async function init() {
+let appStarted = false;
+async function startApp() {
+  if (appStarted) return;
+  appStarted = true;
+  document.getElementById('auth-overlay').classList.add('hidden');
+  document.getElementById('app-root').style.display = '';
   renderHeaderDate();
   await loadData();
   setupForm();
   initCalendar();
   renderAll();
+}
+
+function setupAuth() {
+  const form = document.getElementById('auth-form');
+  const statusEl = document.getElementById('auth-status');
+  const btn = document.getElementById('auth-submit-btn');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('auth-email').value.trim();
+    if (!email) return;
+    btn.disabled = true;
+    statusEl.classList.remove('error');
+    statusEl.textContent = 'Sending magic link…';
+    const { error } = await sbClient.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: window.location.href.split('#')[0] }
+    });
+    btn.disabled = false;
+    if (error) {
+      statusEl.classList.add('error');
+      statusEl.textContent = error.message;
+    } else {
+      statusEl.textContent = `Check ${email} for a sign-in link.`;
+    }
+  });
+
+  sbClient.auth.onAuthStateChange((event, session) => {
+    if (session && session.user) {
+      currentUserId = session.user.id;
+      startApp();
+    }
+  });
+}
+
+async function init() {
+  setupAuth();
+  const { data: { session } } = await sbClient.auth.getSession();
+  if (session && session.user) {
+    currentUserId = session.user.id;
+    await startApp();
+  }
+  // if no session yet, the auth overlay stays visible until onAuthStateChange fires
 }
 init();
 </script>
