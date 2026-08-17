@@ -152,6 +152,13 @@
   .due-tag { font-size: 10.5px; color: var(--text-muted); padding: 2px 8px; border-radius: 8px; background: rgba(255,255,255,0.06); white-space: nowrap; }
   .due-tag.overdue { color: var(--red); background: rgba(224,82,82,0.16); }
   .due-tag.today { color: var(--accent-bright); background: rgba(75,165,184,0.16); }
+  .adhoc-date-input {
+    background: rgba(0,0,0,0.22); border: 1px solid var(--glass-border); border-radius: 8px;
+    padding: 4px 8px; font-size: 11px; font-family: inherit; color: var(--text-primary);
+    outline: none; color-scheme: dark;
+  }
+  .adhoc-date-input.overdue { border-color: rgba(224,82,82,0.5); }
+  .adhoc-date-input.today { border-color: rgba(75,165,184,0.5); }
 
   .task-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-left: auto; }
   .act-btn {
@@ -815,26 +822,28 @@ function renderToday() {
     adhocTasks.forEach(t => {
       const row = document.createElement('div');
       row.className = 'task-row';
-      let dueHtml = '';
+      let statusClass = '', statusLabel = '';
       if (t.dueDate) {
-        if (t.dueDate < dateStr) dueHtml = `<span class="due-tag overdue">Overdue · ${t.dueDate}</span>`;
-        else if (t.dueDate === dateStr) dueHtml = `<span class="due-tag today">Due Today</span>`;
-        else dueHtml = `<span class="due-tag">Due ${t.dueDate}</span>`;
+        if (t.dueDate < dateStr) { statusClass = 'overdue'; statusLabel = 'Overdue'; }
+        else if (t.dueDate === dateStr) { statusClass = 'today'; statusLabel = 'Due Today'; }
+        else { statusLabel = 'Due ' + t.dueDate; }
       } else {
-        dueHtml = `<span class="due-tag">No due date</span>`;
+        statusLabel = 'No due date';
       }
       row.innerHTML = `
         <div class="task-meta">
           <span class="task-name">${escapeHtml(t.name)}</span>
           ${diffBadge(t.difficulty)}
           <span class="xp-tag">+${POINTS[t.difficulty]} XP</span>
-          ${dueHtml}
+          <span class="due-tag ${statusClass}">${statusLabel}</span>
+          <input type="date" class="adhoc-date-input ${statusClass}" value="${t.dueDate || ''}" data-id="${t.id}">
         </div>
         <div class="task-actions">
           <button class="act-btn act-complete" data-act="adhoc-complete" data-id="${t.id}">✓ Complete</button>
           <button class="act-btn act-delete" data-act="adhoc-delete" data-id="${t.id}">Delete</button>
         </div>`;
       adhocList.appendChild(row);
+      row.querySelector('.adhoc-date-input').onchange = (e) => { t.dueDate = e.target.value || null; saveData(); renderAll(); };
     });
   }
 
@@ -908,7 +917,7 @@ function mgmtRow(t, subset, idx) {
   } else if (t.type === 'interval') {
     extra = `<span class="due-tag">Every ${t.intervalDays} day${t.intervalDays === 1 ? '' : 's'} · from ${t.startDate}</span>`;
   } else if (t.type === 'adhoc') {
-    extra = t.dueDate ? `<span class="due-tag">Due ${t.dueDate}</span>` : `<span class="due-tag">No due date</span>`;
+    extra = `<input type="date" class="adhoc-date-input" value="${t.dueDate || ''}" data-id="${t.id}">`;
   }
   row.innerHTML = `
     <div class="reorder-btns">
@@ -924,6 +933,8 @@ function mgmtRow(t, subset, idx) {
   row.querySelector('[data-dir="up"]').onclick = () => { if (idx > 0) { swapOrder(t, subset[idx - 1]); renderAll(); } };
   row.querySelector('[data-dir="down"]').onclick = () => { if (idx < subset.length - 1) { swapOrder(t, subset[idx + 1]); renderAll(); } };
   row.querySelector('[data-act="mgmt-delete"]').onclick = () => { deleteTask(t.id); renderAll(); showToast('Task deleted.'); };
+  const dateInput = row.querySelector('.adhoc-date-input');
+  if (dateInput) dateInput.onchange = (e) => { t.dueDate = e.target.value || null; saveData(); renderAll(); };
 
   return row;
 }
